@@ -5259,6 +5259,7 @@ static int port_handler(Gpx *gpx, Sio *sio, char *buffer, size_t length)
             fprintf(gpx->log, "DEBUG: Written %zd\n", length);
             sio->bytes_out += length;
 
+			// XXX: Dead code? sio->bytes_out is never updated
             if(sio->bytes_in) {
                 fprintf(gpx->log, "DEBUG: %ud == sio->bytes_in. Trying to read\n", sio->bytes_in);
                 // recieve the response
