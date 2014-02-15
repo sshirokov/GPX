@@ -33,6 +33,7 @@
 #include <strings.h>
 #include <sys/types.h>
 #include <sys/uio.h>
+#include <termios.h>
 #include <unistd.h>
 
 #include "gpx.h"
@@ -5214,6 +5215,31 @@ char buffer_size_query[] = {
     0       // crc
 };
 
+// Set the terminal attribute to expect `count' data
+// before actually calling read(2)
+// A hack to try preventing read() buffer underruns
+size_t expect_and_read(Gpx *gpx, int fd, void *buff, size_t count) {
+	int rc = 0;
+	struct termios cfg;
+
+	if((rc = tcgetattr(fd, &cfg)) == -1) {
+		fprintf(stderr, "DEBUG: Failed to get terminal attrs from %d\n", fd);
+		assert(0);
+	}
+
+	// Set the minmum to read to the expected read, without timeout
+	cfg.c_cc[VTIME] = 0;
+	cfg.c_cc[VMIN] = count;
+
+	if((rc = tcsetattr(fd, TCSANOW, &cfg)) == -1) {
+		fprintf(stderr, "DEBUG: Failed to set terminal attrs on %d\n", fd);
+		assert(0);
+	}
+
+
+	return read(fd, buff, count);
+}
+
 static int port_handler(Gpx *gpx, Sio *sio, char *buffer, size_t length)
 {
     int rval = SUCCESS;
@@ -5236,7 +5262,7 @@ static int port_handler(Gpx *gpx, Sio *sio, char *buffer, size_t length)
             if(sio->bytes_in) {
                 fprintf(gpx->log, "DEBUG: %ud == sio->bytes_in. Trying to read\n", sio->bytes_in);
                 // recieve the response
-                if((bytes = read(sio->port, gpx->buffer.in, 2)) == -1) {
+                if((bytes = expect_and_read(gpx, sio->port, gpx->buffer.in, 2)) == -1) {
                     return errno;
                 }
                 else if(bytes != 2) {
@@ -5252,7 +5278,7 @@ static int port_handler(Gpx *gpx, Sio *sio, char *buffer, size_t length)
                 fprintf(gpx->log, "DEBUG: First read\n");
                 for(;;) {
                     // read start byte
-                    if((bytes = read(sio->port, gpx->buffer.in, 1)) == -1) {
+                    if((bytes = expect_and_read(gpx, sio->port, gpx->buffer.in, 1)) == -1) {
                         fprintf(gpx->log, "DEBUG: Failed to read byte one: %d\n", errno);
                         return errno;
                     }
@@ -5269,7 +5295,7 @@ static int port_handler(Gpx *gpx, Sio *sio, char *buffer, size_t length)
                 }
                 // read length
                 fprintf(gpx->log, "DEBUG: Reading length\n");
-                if((bytes = read(sio->port, gpx->buffer.in + 1, 1)) == -1) {
+                if((bytes = expect_and_read(gpx, sio->port, gpx->buffer.in + 1, 1)) == -1) {
                     fprintf(gpx->log, "DEBUG: Failed to read length: %d:%s\n", errno, strerror(errno));
                     return errno;
                 }
@@ -5281,7 +5307,7 @@ static int port_handler(Gpx *gpx, Sio *sio, char *buffer, size_t length)
             size_t payload_length = gpx->buffer.in[1];
             fprintf(gpx->log, "DEBUG: Expecting to read %zd + 1 based on %d\n", payload_length, gpx->buffer.in[1]);
             // recieve payload
-            if((bytes = read(sio->port, gpx->buffer.in + 2, payload_length + 1)) == -1) {
+            if((bytes = expect_and_read(gpx, sio->port, gpx->buffer.in + 2, payload_length + 1)) == -1) {
                 fprintf(gpx->log, "DEBUG: Failed to read length, got %zd: %d:%s\n", bytes, errno, strerror(errno));
                 return errno;
             }
